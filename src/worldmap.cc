@@ -674,6 +674,12 @@ static int wmMaxMapNum = 0;
 // 0x51DE14
 static int wmBkWin = -1;
 
+// Controller: finestra della mappa del mondo.
+int worldmapGetWindow()
+{
+    return wmBkWin;
+}
+
 // 0x51DE24
 static unsigned char* wmBkWinBuf = nullptr;
 

@@ -287,6 +287,8 @@ void wmSetPartyWorldPos(int x, int y);
 void wmCarSetCurrentArea(int area);
 void wmForceEncounter(int map, unsigned int flags);
 
+int worldmapGetWindow();
+
 } // namespace fallout
 
 #endif /* WORLD_MAP_H */

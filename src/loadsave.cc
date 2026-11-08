@@ -296,7 +296,13 @@ static MessageListItem gLoadSaveMessageListItem;
 static int _dbleclkcntr;
 
 // 0x6142C4
-static int gLoadSaveWindow;
+static int gLoadSaveWindow = -1;
+
+// Controller: finestra di salvataggio/caricamento (per usare le frecce).
+int loadSaveGetWindow()
+{
+    return gLoadSaveWindow;
+}
 
 // 0x6142EC
 static unsigned char* _snapshot;
@@ -1506,6 +1512,7 @@ static int lsgWindowInit(int windowType)
 static int lsgWindowFree(int windowType)
 {
     windowDestroy(gLoadSaveWindow);
+    gLoadSaveWindow = -1;
     fontSetCurrent(gLoadSaveWindowOldFont);
     messageListFree(&gLoadSaveMessageList);
 

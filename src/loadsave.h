@@ -23,6 +23,8 @@ void lsgInit();
 int MapDirErase(const char* path, const char* extension);
 int _MapDirEraseFile_(const char* a1, const char* a2);
 
+int loadSaveGetWindow();
+
 } // namespace fallout
 
 #endif /* LOAD_SAVE_GAME_H */

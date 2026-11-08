@@ -662,7 +662,13 @@ static int gCharacterEditorPrimaryStatMinusBtns[7];
 static unsigned char* gCharacterEditorWindowBuffer;
 
 // 0x57060C
-static int gCharacterEditorWindow;
+static int gCharacterEditorWindow = -1;
+
+// Controller: finestra della scheda personaggio (per usare le frecce).
+int characterEditorGetWindow()
+{
+    return gCharacterEditorWindow;
+}
 
 // + stats buttons
 //
@@ -1841,6 +1847,7 @@ static void characterEditorWindowFree()
     }
 
     windowDestroy(gCharacterEditorWindow);
+    gCharacterEditorWindow = -1;
 
     for (int index = 0; index < EDITOR_GRAPHIC_COUNT; index++) {
         _editorFrmImages[index].unlock();

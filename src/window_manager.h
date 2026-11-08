@@ -147,6 +147,15 @@ typedef struct ButtonGroup {
     Button* buttons[BUTTON_GROUP_BUTTON_LIST_CAPACITY];
 } ButtonGroup;
 
+typedef struct NavTarget {
+    Rect rect;
+    int win;
+    int btn;
+} NavTarget;
+
+int windowManagerGetNavTargets(NavTarget* targets, int max, int excludeWin1, int excludeWin2);
+int windowManagerGetTopVisibleWindow(int excludeWin1, int excludeWin2);
+
 typedef int(VideoSystemInitProc)();
 typedef void(VideoSystemExitProc)();
 

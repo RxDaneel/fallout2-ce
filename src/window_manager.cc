@@ -1151,6 +1151,90 @@ int windowGetAtPoint(int x, int y)
     return -1;
 }
 
+// Controller: pulsanti attivi e visibili, in coordinate schermo, per la
+// navigazione con la croce. Esclude le finestre indicate (mappa, barra) e i
+// pulsanti coperti da altre finestre.
+int windowManagerGetNavTargets(NavTarget* targets, int max, int excludeWin1, int excludeWin2)
+{
+    int count = 0;
+    for (int index = gWindowsLength - 1; index >= 0 && count < max; index--) {
+        Window* window = gWindows[index];
+        if ((window->flags & WINDOW_HIDDEN) != 0 || window->id == excludeWin1 || window->id == excludeWin2) {
+            continue;
+        }
+
+        int windowWidth = window->rect.right - window->rect.left + 1;
+        int windowHeight = window->rect.bottom - window->rect.top + 1;
+
+        for (Button* button = window->buttonListHead; button != nullptr && count < max; button = button->next) {
+            if ((button->flags & BUTTON_FLAG_DISABLED) != 0) {
+                continue;
+            }
+
+            int width = button->rect.right - button->rect.left + 1;
+            int height = button->rect.bottom - button->rect.top + 1;
+            if (width <= 1 || height <= 1) {
+                continue;
+            }
+
+            // Pulsanti grandi come tutta la finestra: servono a catturare i
+            // clic, non sono comandi.
+            if (width >= windowWidth * 9 / 10 && height >= windowHeight * 9 / 10) {
+                continue;
+            }
+
+            Rect rect;
+            rect.left = window->rect.left + button->rect.left;
+            rect.top = window->rect.top + button->rect.top;
+            rect.right = window->rect.left + button->rect.right;
+            rect.bottom = window->rect.top + button->rect.bottom;
+
+            int cx = (rect.left + rect.right) / 2;
+            int cy = (rect.top + rect.bottom) / 2;
+            if (cx < _scr_size.left || cx > _scr_size.right || cy < _scr_size.top || cy > _scr_size.bottom) {
+                continue;
+            }
+
+            // La finestra visibile più in alto in quel punto deve essere la
+            // sua: altrimenti il pulsante è coperto.
+            Window* top = nullptr;
+            for (int other = gWindowsLength - 1; other >= 0; other--) {
+                Window* candidate = gWindows[other];
+                if ((candidate->flags & WINDOW_HIDDEN) != 0) {
+                    continue;
+                }
+                if (cx >= candidate->rect.left && cx <= candidate->rect.right
+                    && cy >= candidate->rect.top && cy <= candidate->rect.bottom) {
+                    top = candidate;
+                    break;
+                }
+            }
+            if (top != window) {
+                continue;
+            }
+
+            NavTarget* target = &(targets[count++]);
+            target->rect = rect;
+            target->win = window->id;
+            target->btn = button->id;
+        }
+    }
+    return count;
+}
+
+// Controller: la finestra visibile più in alto (escluse quelle indicate).
+int windowManagerGetTopVisibleWindow(int excludeWin1, int excludeWin2)
+{
+    for (int index = gWindowsLength - 1; index >= 0; index--) {
+        Window* window = gWindows[index];
+        if ((window->flags & WINDOW_HIDDEN) != 0 || window->id == excludeWin1 || window->id == excludeWin2) {
+            continue;
+        }
+        return window->id;
+    }
+    return -1;
+}
+
 // 0x4D7918
 int windowGetWidth(int win)
 {

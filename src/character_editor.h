@@ -15,6 +15,8 @@ int characterEditorSave(File* stream);
 int characterEditorLoad(File* stream);
 void characterEditorReset();
 
+int characterEditorGetWindow();
+
 } // namespace fallout
 
 #endif /* CHARACTER_EDITOR_H */
