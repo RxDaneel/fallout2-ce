@@ -685,6 +685,12 @@ void gamepadGetMouseInput(int* dx, int* dy, int* buttons, int* wheelX, int* whee
         mouseSetCursorInvisible(wantHidden);
         gWeHidCursor = wantHidden;
     }
+    // Nasconde subito anche il cursore "3D" della mappa: altrimenti il gioco
+    // farebbe in tempo a scrivere il nome di quello che c'era sotto.
+    if (wantHidden && gameMouseObjectsIsVisible()) {
+        gameMouseObjectsHide();
+        gWeHidMapCursor = true;
+    }
 
     // A tenuto premuto su un oggetto: apre il menu azioni del gioco.
     if (gUseHolding && !gMenuHold && pointerless && gFocus != nullptr && now - gUseHeldSince >= 350) {
@@ -1146,7 +1152,13 @@ static void focusSet(Object* object)
         return;
     }
 #ifdef FALLOUT_AUTOTEST
-    printf("[pad] focus -> %p (dude %p) pid %x\n", (void*)object, (void*)gDude, object ? object->pid : 0);
+    if (object != nullptr && PID_TYPE(object->pid) == OBJ_TYPE_SCENERY) {
+        Proto* proto;
+        protoGetProto(object->pid, &proto);
+        printf("[pad] focus -> scenery pid %x tipo %d sid %d uso %d\n", object->pid, proto->scenery.type, object->sid, _obj_action_can_use(object));
+    } else {
+        printf("[pad] focus -> %p (dude %p) pid %x\n", (void*)object, (void*)gDude, object ? object->pid : 0);
+    }
 #endif
     focusClear(true);
     gFocus = object;
@@ -1244,6 +1256,29 @@ static void focusParkCursor()
         objectGetRect(gFocus, &rect);
         x = (rect.left + rect.right) / 2;
         y = rect.top + (rect.bottom - rect.top) * 3 / 5;
+
+        // Il gioco riconosce l'oggetto solo su un pixel pieno dello sprite
+        // (il centro di oggetti piatti o sottili può essere trasparente):
+        // cerca il pixel pieno più vicino al centro.
+        if (_obj_intersects_with(gFocus, x, y) == 0) {
+            int bestDistance = INT_MAX;
+            int bestX = x;
+            int bestY = y;
+            for (int sy = rect.top; sy <= rect.bottom; sy += 2) {
+                for (int sx = rect.left; sx <= rect.right; sx += 2) {
+                    int ddx = sx - x;
+                    int ddy = sy - y;
+                    int distance = ddx * ddx + ddy * ddy;
+                    if (distance < bestDistance && _obj_intersects_with(gFocus, sx, sy) != 0) {
+                        bestDistance = distance;
+                        bestX = sx;
+                        bestY = sy;
+                    }
+                }
+            }
+            x = bestX;
+            y = bestY;
+        }
     }
 
     int mouseX;
