@@ -1,5 +1,7 @@
 #include "game.h"
 
+#include "gamepad.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -486,6 +488,8 @@ void gameExit()
 // 0x442D44
 int gameHandleKey(int eventCode, bool isInCombatMode)
 {
+    gamepadGameTick(isInCombatMode);
+
     // NOTE: Uninline.
     if (gameGetState() == GAME_STATE_5) {
         _gdialogSystemEnter();

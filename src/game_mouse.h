@@ -89,6 +89,7 @@ int gameMouseGetCursor();
 void gmouse_set_mapper_mode(int mode);
 void gameMouseSetMode(int a1);
 int gameMouseGetMode();
+bool gameMouseIsEnabled();
 void gameMouseCycleMode();
 void _gmouse_3d_refresh();
 void gameMouseResetBouncingCursorFid();

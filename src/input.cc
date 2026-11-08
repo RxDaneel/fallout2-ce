@@ -1,5 +1,7 @@
 #include "input.h"
 
+#include "gamepad.h"
+
 #include <SDL.h>
 
 #include "audio_engine.h"
@@ -926,10 +928,21 @@ void _GNW95_process_message()
         case SDL_FINGERUP:
             touch_handle_end(&(e.tfinger));
             break;
+        case SDL_CONTROLLERDEVICEADDED:
+        case SDL_CONTROLLERDEVICEREMOVED:
+        case SDL_CONTROLLERBUTTONDOWN:
+        case SDL_CONTROLLERBUTTONUP:
+        case SDL_CONTROLLERAXISMOTION:
+            gamepadHandleEvent(&e);
+            break;
         case SDL_KEYDOWN:
         case SDL_KEYUP:
             if (!keyboardIsDisabled()) {
                 keyboardData.key = e.key.keysym.scancode;
+                // Tasto Indietro di Android = Esc.
+                if (keyboardData.key == SDL_SCANCODE_AC_BACK) {
+                    keyboardData.key = SDL_SCANCODE_ESCAPE;
+                }
                 keyboardData.down = (e.key.state & SDL_PRESSED) != 0;
                 _GNW95_process_key(&keyboardData);
             }
@@ -1025,6 +1038,19 @@ void _GNW95_lost_focus()
 
         SDL_Delay(125);
     }
+}
+
+// Tasto simulato (controller). Usa gli scancode SDL come la tastiera vera.
+void inputInjectKey(int scancode, bool down)
+{
+    if (keyboardIsDisabled()) {
+        return;
+    }
+
+    KeyboardData keyboardData;
+    keyboardData.key = scancode;
+    keyboardData.down = down ? 1 : 0;
+    _GNW95_process_key(&keyboardData);
 }
 
 void beginTextInput()

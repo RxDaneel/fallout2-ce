@@ -422,6 +422,11 @@ void _gmouse_disable(int a1)
     }
 }
 
+bool gameMouseIsEnabled()
+{
+    return gGameMouseInitialized && _gmouse_enabled;
+}
+
 // 0x44B4CC
 void _gmouse_enable_scrolling()
 {

@@ -104,6 +104,8 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/game_memory.cc"
     "src/game_memory.h"
     "src/game_mouse.cc"
+    "src/gamepad.cc"
+    "src/gamepad.h"
     "src/game_mouse.h"
     "src/game_movie.cc"
     "src/game_movie.h"

@@ -668,6 +668,38 @@ bool _gdialogActive()
     return _dialog_state_fix != 0;
 }
 
+// Controller: centri (in coordinate schermo) delle risposte visibili, per
+// spostare il cursore da una risposta all'altra con la croce direzionale.
+int gameDialogGetOptionTargets(int* xs, int* ys, int max)
+{
+    if (!_gdialogActive() || gGameDialogOptionsWindow == -1) {
+        return 0;
+    }
+
+    Rect windowRect;
+    if (windowGetRect(gGameDialogOptionsWindow, &windowRect) == -1) {
+        return 0;
+    }
+
+    int count = 0;
+    for (int index = 0; index < gGameDialogOptionEntriesLength && count < max; index++) {
+        GameDialogOptionEntry* optionEntry = &(gDialogOptionEntries[index]);
+        if (optionEntry->btn == -1) {
+            continue;
+        }
+
+        if (optionEntry->bottom <= optionEntry->top || optionEntry->bottom > GAME_DIALOG_OPTIONS_WINDOW_HEIGHT) {
+            continue;
+        }
+
+        xs[count] = windowRect.left + 40;
+        ys[count] = windowRect.top + (optionEntry->top + optionEntry->bottom) / 2;
+        count++;
+    }
+
+    return count;
+}
+
 // gdialogEnter
 // 0x444D3C
 void gameDialogEnter(Object* speaker, int a2)
