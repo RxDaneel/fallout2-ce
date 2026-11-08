@@ -1,5 +1,6 @@
 #include "input.h"
 
+#include "autotest.h"
 #include "gamepad.h"
 
 #include <SDL.h>
@@ -905,6 +906,10 @@ int _GNW95_input_init()
 // 0x4C9CF0
 void _GNW95_process_message()
 {
+#ifdef FALLOUT_AUTOTEST
+    autotestTick();
+#endif
+
     // We need to process event loop even if program is not active or keyboard
     // is disabled, because if we ignore it, we'll never be able to reactivate
     // it again.

@@ -93,7 +93,13 @@ bool keyboardDeviceGetData(KeyboardData* keyboardData)
 // 0x4E070C
 bool mouseDeviceInit()
 {
+#ifdef FALLOUT_AUTOTEST
+    // Senza schermo il mouse relativo non è disponibile: va bene lo stesso.
+    SDL_SetRelativeMouseMode(SDL_TRUE);
+    return true;
+#else
     return SDL_SetRelativeMouseMode(SDL_TRUE) == 0;
+#endif
 }
 
 // 0x4E078C

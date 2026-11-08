@@ -36,6 +36,7 @@ void mouseFree();
 int mouseSetFrame(unsigned char* a1, int width, int height, int pitch, int a5, int a6, char a7);
 void mouseShowCursor();
 void mouseHideCursor();
+void mouseSetCursorInvisible(bool invisible);
 void _mouse_info();
 void _mouse_simulate_input(int delta_x, int delta_y, int buttons);
 bool _mouse_in(int left, int top, int right, int bottom);

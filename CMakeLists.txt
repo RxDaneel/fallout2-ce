@@ -106,6 +106,8 @@ target_sources(${EXECUTABLE_NAME} PUBLIC
     "src/game_mouse.cc"
     "src/gamepad.cc"
     "src/gamepad.h"
+    "src/autotest.cc"
+    "src/autotest.h"
     "src/game_mouse.h"
     "src/game_movie.cc"
     "src/game_movie.h"
@@ -394,4 +396,10 @@ if(APPLE)
     endif()
 
     include(CPack)
+endif()
+
+# Banco di prova automatico (solo sviluppo): vedi src/autotest.cc.
+option(FALLOUT_AUTOTEST "Abilita il banco di prova automatico" OFF)
+if(FALLOUT_AUTOTEST)
+    target_compile_definitions(${EXECUTABLE_NAME} PRIVATE FALLOUT_AUTOTEST)
 endif()

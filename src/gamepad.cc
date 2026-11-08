@@ -2,11 +2,13 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include <algorithm>
 #include <vector>
 
+#include "actions.h"
 #include "animation.h"
 #include "combat.h"
 #include "config.h"
@@ -17,11 +19,14 @@
 #include "game_dialog.h"
 #include "game_mouse.h"
 #include "input.h"
+#include "interface.h"
 #include "map.h"
 #include "mouse.h"
 #include "object.h"
 #include "party_member.h"
 #include "proto.h"
+#include "proto_instance.h"
+#include "skill_defs.h"
 #include "svga.h"
 #include "tile.h"
 #include "window_manager.h"
@@ -90,6 +95,8 @@ enum Action {
     ACTION_CANCEL_MODE,
     ACTION_DIALOG_PREV,
     ACTION_DIALOG_NEXT,
+    ACTION_PAD_USE, // A senza puntatore: usa l'oggetto evidenziato
+    ACTION_PAD_LOOK, // X senza puntatore: esamina l'oggetto evidenziato
 };
 
 struct Binding {
@@ -140,6 +147,24 @@ static double gStickLastAngle = 0.0;
 static bool gStickRunning = false;
 
 static Object* gTargetCurrent = nullptr;
+
+// Modalità senza puntatore (controller sulla mappa).
+static bool gPadMode = false; // ultimo input dal controller
+static Object* gFocus = nullptr; // oggetto evidenziato
+static bool gFocusManual = false; // scelto con LB/RB: resta finché non ti muovi
+static bool gFocusOutlined = false;
+static bool gWeHidCursor = false;
+static bool gWeHidMapCursor = false;
+static Uint32 gFocusNameDue = 0; // quando scrivere il nome dell'oggetto evidenziato // cursore "3D" della mappa (freccia + icona azione)
+static bool gUseHolding = false; // A tenuto premuto
+static Uint32 gUseHeldSince = 0;
+static bool gMenuHold = false; // menu azioni del gioco aperto con A tenuto
+static int gMenuStep = 0; // spostamenti richiesti nel menu azioni
+static bool gPendingUse = false;
+static bool gPendingLook = false;
+static double gFacingX = 0.0; // direzione in cui "guarda" il personaggio
+static double gFacingY = 1.0;
+static Uint32 gLastScrollTick = 0;
 
 static Uint32 gLastGameTick = 0;
 
@@ -272,11 +297,11 @@ static Binding bindingFor(int button, Context context)
     case CONTEXT_COMBAT:
         switch (button) {
         case SDL_CONTROLLER_BUTTON_A:
-            return act(ACTION_MOUSE_LEFT);
+            return act(context == CONTEXT_MAP ? ACTION_PAD_USE : ACTION_MOUSE_LEFT);
         case SDL_CONTROLLER_BUTTON_B:
             return act(ACTION_CANCEL_MODE);
         case SDL_CONTROLLER_BUTTON_X:
-            return act(ACTION_MOUSE_RIGHT);
+            return act(context == CONTEXT_MAP ? ACTION_PAD_LOOK : ACTION_MOUSE_RIGHT);
         case SDL_CONTROLLER_BUTTON_Y:
             return keyTap(SDL_SCANCODE_I);
         case SDL_CONTROLLER_BUTTON_LEFTSHOULDER:
@@ -417,6 +442,13 @@ static void bindingPress(int slot, Binding binding)
     case ACTION_CANCEL_MODE:
         gPendingCancelMode = true;
         break;
+    case ACTION_PAD_USE:
+        gUseHolding = true;
+        gUseHeldSince = SDL_GetTicks();
+        break;
+    case ACTION_PAD_LOOK:
+        gPendingLook = true;
+        break;
     case ACTION_DIALOG_PREV:
         dialogStep(-1);
         break;
@@ -441,6 +473,16 @@ static void bindingRelease(int slot)
     case ACTION_MOUSE_RIGHT:
         gMouseRightHeld = false;
         break;
+    case ACTION_PAD_USE:
+        if (gMenuHold) {
+            // Rilascio = conferma la voce scelta nel menu azioni.
+            gMouseLeftHeld = false;
+            gMenuHold = false;
+        } else if (gUseHolding) {
+            gPendingUse = true;
+        }
+        gUseHolding = false;
+        break;
     default:
         break;
     }
@@ -460,6 +502,14 @@ void gamepadHandleEvent(SDL_Event* event)
         controllerClose(event->cdevice.which);
         break;
     case SDL_CONTROLLERBUTTONDOWN:
+        gPadMode = true;
+        if (gMenuHold && (event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP || event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_DOWN)) {
+            gMenuStep += event->cbutton.button == SDL_CONTROLLER_BUTTON_DPAD_UP ? -1 : 1;
+            break;
+        }
+#ifdef FALLOUT_AUTOTEST
+        printf("[pad] pulsante %d giù, contesto %d\n", event->cbutton.button, currentContext());
+#endif
         if (event->cbutton.which != gControllerId) {
             break;
         }
@@ -489,10 +539,16 @@ void gamepadHandleEvent(SDL_Event* event)
         }
         break;
     case SDL_CONTROLLERAXISMOTION:
+#ifdef FALLOUT_AUTOTEST
+        printf("[pad] asse %d = %d (id %d, atteso %d)\n", event->caxis.axis, event->caxis.value, event->caxis.which, gControllerId);
+#endif
         if (event->caxis.which != gControllerId) {
             break;
         }
         gAxis[event->caxis.axis] = event->caxis.value;
+        if (abs(event->caxis.value) > 12000) {
+            gPadMode = true;
+        }
 
         if (event->caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT || event->caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT) {
             bool right = event->caxis.axis == SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
@@ -620,6 +676,55 @@ void gamepadGetMouseInput(int* dx, int* dy, int* buttons, int* wheelX, int* whee
     }
 
     Context context = currentContext();
+    bool pointerless = context == CONTEXT_MAP && gPadMode;
+
+    // Senza puntatore il cursore resta nascosto sulla mappa; ricompare nei
+    // menu, in combattimento e quando si apre il menu azioni.
+    bool wantHidden = pointerless && !gMenuHold;
+    if (wantHidden != gWeHidCursor) {
+        mouseSetCursorInvisible(wantHidden);
+        gWeHidCursor = wantHidden;
+    }
+
+    // A tenuto premuto su un oggetto: apre il menu azioni del gioco.
+    if (gUseHolding && !gMenuHold && pointerless && gFocus != nullptr && now - gUseHeldSince >= 350) {
+        gMenuHold = true;
+        gMenuStep = 0;
+        if (gWeHidMapCursor) {
+            gameMouseObjectsShow();
+            gWeHidMapCursor = false;
+        }
+        mouseSetCursorInvisible(false);
+        gWeHidCursor = false;
+        gMouseLeftHeld = true;
+    }
+
+    if (gMenuHold) {
+        // Nel menu azioni: croce o stick su/giù scorrono le voci (il gioco
+        // cambia voce quando il cursore si sposta di più di 10 punti).
+        static Uint32 lastStickStep = 0;
+        double sx;
+        double sy;
+        if (stickRead(SDL_CONTROLLER_AXIS_LEFTX, SDL_CONTROLLER_AXIS_LEFTY, &sx, &sy) > 0.5 && fabs(sy) > 0.7 && now - lastStickStep > 220) {
+            gMenuStep += sy > 0 ? 1 : -1;
+            lastStickStep = now;
+        }
+        if (gMenuStep != 0) {
+            *dy += gMenuStep > 0 ? 14 : -14;
+            gMenuStep += gMenuStep > 0 ? -1 : 1;
+        }
+        *buttons |= MOUSE_STATE_LEFT_BUTTON_DOWN;
+        return;
+    }
+
+    if (pointerless) {
+        // Niente cursore da muovere: gli stick muovono personaggio e visuale.
+        if (gMouseLeftHeld || gMouseLeftPulse > 0) {
+            *buttons |= MOUSE_STATE_LEFT_BUTTON_DOWN;
+        }
+        if (gMouseLeftPulse > 0) gMouseLeftPulse--;
+        return;
+    }
 
     // Stick che muove il cursore: sulla mappa fuori dal combattimento lo
     // stick sinistro muove il personaggio, quindi il cursore è sul destro.
@@ -695,10 +800,16 @@ struct Candidate {
     Rect rect;
 };
 
+static bool gIncludeDude = false; // abilità su se stessi (pronto soccorso)
+
 static bool isInteresting(Object* object, bool combatOnly)
 {
-    if (object == nullptr || object == gDude) {
+    if (object == nullptr) {
         return false;
+    }
+
+    if (object == gDude) {
+        return gIncludeDude && !combatOnly;
     }
 
     if ((object->flags & OBJECT_HIDDEN) != 0) {
@@ -731,7 +842,9 @@ static bool isInteresting(Object* object, bool combatOnly)
         if (proto->scenery.type != SCENERY_TYPE_GENERIC) {
             return true; // porte, scale, ascensori
         }
-        return object->sid != -1; // oggetti con script: computer, interruttori...
+        // Solo gli oggetti che si possono usare (computer, interruttori...):
+        // non i muri o i mobili decorativi che hanno uno script.
+        return _obj_action_can_use(object);
     }
 
     return false;
@@ -898,6 +1011,9 @@ static void cycleTarget(int step, bool combat)
 {
     std::vector<Candidate> candidates;
     collectCandidates(candidates, combat);
+#ifdef FALLOUT_AUTOTEST
+    printf("[pad] bersagli: %zu\n", candidates.size());
+#endif
     if (candidates.empty()) {
         gTargetCurrent = nullptr;
         return;
@@ -968,6 +1084,262 @@ static void cycleTarget(int step, bool combat)
 }
 
 // -----------------------------------------------------------------------------
+// Modalità senza puntatore: oggetto evidenziato
+// -----------------------------------------------------------------------------
+
+static bool isSkillMode(int mode)
+{
+    return mode >= FIRST_GAME_MOUSE_MODE_SKILL && mode < GAME_MOUSE_MODE_COUNT;
+}
+
+static int skillForMode(int mode)
+{
+    switch (mode) {
+    case GAME_MOUSE_MODE_USE_FIRST_AID:
+        return SKILL_FIRST_AID;
+    case GAME_MOUSE_MODE_USE_DOCTOR:
+        return SKILL_DOCTOR;
+    case GAME_MOUSE_MODE_USE_LOCKPICK:
+        return SKILL_LOCKPICK;
+    case GAME_MOUSE_MODE_USE_STEAL:
+        return SKILL_STEAL;
+    case GAME_MOUSE_MODE_USE_TRAPS:
+        return SKILL_TRAPS;
+    case GAME_MOUSE_MODE_USE_SCIENCE:
+        return SKILL_SCIENCE;
+    case GAME_MOUSE_MODE_USE_REPAIR:
+        return SKILL_REPAIR;
+    }
+    return -1;
+}
+
+static void focusSetOutline(Object* object, bool on)
+{
+    if (object == nullptr) {
+        return;
+    }
+
+    Rect rect;
+    int rc = on ? objectSetOutline(object, OUTLINE_TYPE_ITEM, &rect) : objectClearOutline(object, &rect);
+    if (rc == 0) {
+        tileWindowRefreshRect(&rect, object->elevation);
+    }
+}
+
+// Toglie l'evidenziazione. Se l'oggetto non è più sulla mappa (raccolto,
+// distrutto, cambio mappa) non lo tocca: il puntatore potrebbe non valere più.
+static void focusClear(bool objectStillValid)
+{
+    if (gFocus != nullptr && gFocusOutlined && objectStillValid) {
+        focusSetOutline(gFocus, false);
+    }
+    gFocus = nullptr;
+    gFocusOutlined = false;
+    gFocusManual = false;
+    gFocusNameDue = 0;
+    gTargetCurrent = nullptr;
+}
+
+static void focusSet(Object* object)
+{
+    if (object == gFocus) {
+        return;
+    }
+#ifdef FALLOUT_AUTOTEST
+    printf("[pad] focus -> %p (dude %p) pid %x\n", (void*)object, (void*)gDude, object ? object->pid : 0);
+#endif
+    focusClear(true);
+    gFocus = object;
+    if (gFocus != nullptr && gFocus != gDude) {
+        focusSetOutline(gFocus, true);
+        gFocusOutlined = true;
+        gFocusNameDue = SDL_GetTicks() + 400;
+    }
+}
+
+static double angleBetween(double ax, double ay, double bx, double by)
+{
+    double la = sqrt(ax * ax + ay * ay);
+    double lb = sqrt(bx * bx + by * by);
+    if (la < 0.001 || lb < 0.001) {
+        return 0.0;
+    }
+    double c = (ax * bx + ay * by) / (la * lb);
+    return acos(std::clamp(c, -1.0, 1.0));
+}
+
+// Sceglie l'oggetto da evidenziare: vicino e nella direzione in cui ti muovi.
+static void focusUpdate()
+{
+    gIncludeDude = isSkillMode(gameMouseGetMode());
+
+    std::vector<Candidate> candidates;
+    collectCandidates(candidates, false);
+
+    bool currentValid = false;
+    for (const Candidate& candidate : candidates) {
+        if (candidate.object == gFocus) {
+            currentValid = true;
+            break;
+        }
+    }
+
+    if (gFocus != nullptr && !currentValid) {
+        // È sparito dalla mappa: niente da ripulire.
+        gFocusOutlined = false;
+        focusClear(false);
+    }
+
+    if (gFocusManual && currentValid) {
+        return;
+    }
+
+    int dudeX;
+    int dudeY;
+    tileToScreenXY(gDude->tile, &dudeX, &dudeY, gDude->elevation);
+    dudeX += 16;
+    dudeY += 8;
+
+    Object* best = nullptr;
+    double bestScore = 1e9;
+    double currentScore = 1e9;
+    for (const Candidate& candidate : candidates) {
+        int distance = candidate.object == gDude ? 0 : tileDistanceBetween(gDude->tile, candidate.object->tile);
+        if (distance > 8) {
+            continue;
+        }
+        double angle = candidate.object == gDude ? 0.0 : angleBetween(gFacingX, gFacingY, candidate.x - dudeX, candidate.y - dudeY);
+        double score = distance + angle * 1.5;
+        if (PID_TYPE(candidate.object->pid) == OBJ_TYPE_CRITTER && !critterIsDead(candidate.object)) {
+            score -= 2.0; // le persone sono la cosa con cui interagisci più spesso
+        }
+        if (candidate.object == gDude) {
+            score = 3.0; // in modalità abilità si può scegliere anche se stessi
+        }
+        if (candidate.object == gFocus) {
+            currentScore = score;
+        }
+        if (score < bestScore) {
+            bestScore = score;
+            best = candidate.object;
+        }
+    }
+
+    // Isteresi: non saltare avanti e indietro tra due oggetti vicini.
+    if (gFocus != nullptr && currentScore < 1e8 && bestScore > currentScore - 1.5) {
+        return;
+    }
+
+    focusSet(best);
+}
+
+// Tiene il cursore (nascosto) sull'oggetto evidenziato, così le funzioni del
+// gioco che guardano "cosa c'è sotto il cursore" vedono l'oggetto giusto.
+static void focusParkCursor()
+{
+    int x = screenGetWidth() / 2;
+    int y = screenGetHeight() - 20; // sulla barra dell'interfaccia
+    if (gFocus != nullptr) {
+        Rect rect;
+        objectGetRect(gFocus, &rect);
+        x = (rect.left + rect.right) / 2;
+        y = rect.top + (rect.bottom - rect.top) * 3 / 5;
+    }
+
+    int mouseX;
+    int mouseY;
+    mouseGetPosition(&mouseX, &mouseY);
+    if (abs(mouseX - x) > 2 || abs(mouseY - y) > 2) {
+        gWarpPending = true;
+        gWarpX = x;
+        gWarpY = y;
+    }
+}
+
+// A: l'azione principale sull'oggetto evidenziato, come un clic con il
+// cursore "usa" del gioco originale.
+static void focusUse()
+{
+    Object* target = gFocus;
+    if (target == nullptr) {
+        return;
+    }
+
+    int mode = gameMouseGetMode();
+    if (isSkillMode(mode)) {
+        int skill = skillForMode(mode);
+        focusClear(true);
+        if (actionUseSkill(gDude, target, skill) != -1) {
+            gameMouseSetCursor(MOUSE_CURSOR_NONE);
+            gameMouseSetMode(GAME_MOUSE_MODE_ARROW);
+        }
+        return;
+    }
+
+    if (mode == GAME_MOUSE_MODE_USE_CROSSHAIR) {
+        Object* item;
+        focusClear(true);
+        if (interfaceGetActiveItem(&item) != -1) {
+            _action_use_an_item_on_object(gDude, target, item);
+        }
+        gameMouseSetCursor(MOUSE_CURSOR_NONE);
+        gameMouseSetMode(GAME_MOUSE_MODE_ARROW);
+        return;
+    }
+
+    switch (PID_TYPE(target->pid)) {
+    case OBJ_TYPE_ITEM:
+        focusClear(true);
+        actionPickUp(gDude, target);
+        break;
+    case OBJ_TYPE_CRITTER:
+        if (target == gDude) {
+            break;
+        }
+        if (_obj_action_can_talk_to(target)) {
+            actionTalk(gDude, target);
+        } else {
+            _action_loot_container(gDude, target);
+        }
+        break;
+    case OBJ_TYPE_SCENERY:
+        if (_obj_action_can_use(target)) {
+            _action_use_an_object(gDude, target);
+        } else if (_obj_examine(gDude, target) == -1) {
+            _obj_look_at(gDude, target);
+        }
+        break;
+    }
+}
+
+static void focusLook()
+{
+    if (gFocus != nullptr && _obj_examine(gDude, gFocus) == -1) {
+        _obj_look_at(gDude, gFocus);
+    }
+}
+
+// Stick destro: sposta la visuale.
+static void cameraStickTick()
+{
+    double nx;
+    double ny;
+    double magnitude = stickRead(SDL_CONTROLLER_AXIS_RIGHTX, SDL_CONTROLLER_AXIS_RIGHTY, &nx, &ny);
+    if (magnitude <= 0.0) {
+        return;
+    }
+    Uint32 now = SDL_GetTicks();
+    Uint32 interval = (Uint32)(140 - 100 * magnitude);
+    if (now - gLastScrollTick < interval) {
+        return;
+    }
+    gLastScrollTick = now;
+    int dx = fabs(nx) > 0.38 ? (nx > 0 ? 1 : -1) : 0;
+    int dy = fabs(ny) > 0.38 ? (ny > 0 ? 1 : -1) : 0;
+    mapScroll(dx, dy);
+}
+
+// -----------------------------------------------------------------------------
 // Movimento diretto con lo stick
 // -----------------------------------------------------------------------------
 
@@ -1001,6 +1373,9 @@ static int stickTargetTile(double nx, double ny)
 
 static void issueMove(int tile, bool run)
 {
+#ifdef FALLOUT_AUTOTEST
+    printf("[pad] muovi verso %d da %d (corsa %d)\n", tile, gDude->tile, run);
+#endif
     reg_anim_clear(gDude);
     if (reg_anim_begin(ANIMATION_REQUEST_RESERVED) == -1) {
         return;
@@ -1062,7 +1437,12 @@ static void stickMovementTick()
         return;
     }
 
-    gameMouseSetMode(GAME_MOUSE_MODE_MOVE);
+    if (!gPadMode) {
+        gameMouseSetMode(GAME_MOUSE_MODE_MOVE);
+    }
+    gFacingX = nx;
+    gFacingY = ny;
+    gFocusManual = false;
 
     bool run = magnitude > 0.8;
     double angle = atan2(ny, nx);
@@ -1091,6 +1471,30 @@ static void stickMovementTick()
     followCamera();
 }
 
+// Toglie l'evidenziazione controllando prima che l'oggetto sia ancora sulla
+// mappa.
+static void focusUpdateValidityAndClear()
+{
+    std::vector<Candidate> candidates;
+    gIncludeDude = true;
+    collectCandidates(candidates, false);
+    bool valid = false;
+    for (const Candidate& candidate : candidates) {
+        if (candidate.object == gFocus) {
+            valid = true;
+            break;
+        }
+    }
+    focusClear(valid);
+}
+
+void gamepadPointerUsed()
+{
+    if (gPadMode) {
+        gPadMode = false;
+    }
+}
+
 void gamepadGameTick(bool isInCombatMode)
 {
     mobileSettingsLoad();
@@ -1105,18 +1509,77 @@ void gamepadGameTick(bool isInCombatMode)
     if (gController == nullptr || !mapIsActive()) {
         gPendingTargetStep = 0;
         gPendingCancelMode = false;
+        gPendingUse = false;
+        gPendingLook = false;
         return;
     }
+
+    bool pointerless = gPadMode && !isInCombatMode;
 
     if (gPendingCancelMode) {
         gPendingCancelMode = false;
         gTargetCurrent = nullptr;
-        gameMouseSetMode(GAME_MOUSE_MODE_MOVE);
+        gameMouseSetCursor(MOUSE_CURSOR_NONE);
+        gameMouseSetMode(pointerless ? GAME_MOUSE_MODE_ARROW : GAME_MOUSE_MODE_MOVE);
+    }
+
+    if (!pointerless) {
+        // In combattimento il gioco gestisce i contorni dei personaggi.
+        if (gFocus != nullptr) {
+            focusUpdateValidityAndClear();
+        }
+        if (gWeHidMapCursor) {
+            gameMouseObjectsShow();
+            gWeHidMapCursor = false;
+        }
+    } else {
+        if (!gMenuHold && gameMouseObjectsIsVisible()) {
+            gameMouseObjectsHide();
+            gWeHidMapCursor = true;
+        }
+        // Senza puntatore niente cursore "movimento" con l'esagono rosso.
+        if (gameMouseGetMode() == GAME_MOUSE_MODE_MOVE || gameMouseGetMode() == GAME_MOUSE_MODE_CROSSHAIR) {
+            gameMouseSetMode(GAME_MOUSE_MODE_ARROW);
+        }
+        if (!gMenuHold) {
+            focusUpdate();
+            focusParkCursor();
+        }
+        // Nome nella console ("You see: ..."), solo quando l'evidenziazione
+        // resta ferma un attimo: niente elenco di nomi mentre cammini.
+        if (gFocusNameDue != 0 && SDL_GetTicks() >= gFocusNameDue) {
+            gFocusNameDue = 0;
+            if (gFocus != nullptr && gFocus != gDude) {
+                _obj_look_at(gDude, gFocus);
+            }
+        }
+        cameraStickTick();
     }
 
     if (gPendingTargetStep != 0) {
+        if (pointerless) {
+            gTargetCurrent = gFocus;
+        }
         cycleTarget(gPendingTargetStep, isInCombatMode);
+        if (pointerless) {
+            focusSet(gTargetCurrent);
+            gFocusManual = gFocus != nullptr;
+        }
         gPendingTargetStep = 0;
+    }
+
+    if (gPendingUse) {
+        gPendingUse = false;
+        if (pointerless) {
+            focusUse();
+        }
+    }
+
+    if (gPendingLook) {
+        gPendingLook = false;
+        if (pointerless) {
+            focusLook();
+        }
     }
 
     if (!isInCombatMode && gMobile.stickMovement && !gameUiIsDisabled()) {

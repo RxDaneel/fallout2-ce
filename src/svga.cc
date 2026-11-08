@@ -173,9 +173,15 @@ int _init_vesa_mode(int width, int height)
 int _GNW95_init_window(int width, int height, bool fullscreen, int scale)
 {
     if (gSdlWindow == nullptr) {
+#ifdef FALLOUT_AUTOTEST
+        // Banco di prova senza schermo: niente OpenGL, renderer software.
+        SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+        Uint32 windowFlags = 0;
+#else
         SDL_SetHint(SDL_HINT_RENDER_DRIVER, "opengl");
 
         Uint32 windowFlags = SDL_WINDOW_OPENGL | SDL_WINDOW_ALLOW_HIGHDPI;
+#endif
 
         if (fullscreen) {
             windowFlags |= SDL_WINDOW_FULLSCREEN;
@@ -183,10 +189,16 @@ int _GNW95_init_window(int width, int height, bool fullscreen, int scale)
 
         gSdlWindow = SDL_CreateWindow(gProgramWindowTitle, SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width * scale, height * scale, windowFlags);
         if (gSdlWindow == nullptr) {
+#ifdef FALLOUT_AUTOTEST
+            printf("[autotest] SDL_CreateWindow: %s\n", SDL_GetError());
+#endif
             return -1;
         }
 
         if (!createRenderer(width, height)) {
+#ifdef FALLOUT_AUTOTEST
+            printf("[autotest] createRenderer: %s\n", SDL_GetError());
+#endif
             destroyRenderer();
 
             SDL_DestroyWindow(gSdlWindow);
