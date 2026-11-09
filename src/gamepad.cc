@@ -1285,12 +1285,30 @@ static bool isoWindowRect(Rect* rect)
     return true;
 }
 
+// Parte della mappa davvero visibile: con IFACE_BAR_MODE=1 la vista continua
+// dietro il pannello, che ne copre il fondo.
+static bool isoVisibleRect(Rect* out)
+{
+    Rect iso;
+    if (!isoWindowRect(&iso)) {
+        return false;
+    }
+    Rect bar;
+    if (gInterfaceBarWindow != -1 && windowGetRect(gInterfaceBarWindow, &bar) != -1) {
+        if (bar.top > iso.top && bar.top <= iso.bottom) {
+            iso.bottom = bar.top - 1;
+        }
+    }
+    *out = iso;
+    return true;
+}
+
 static void collectCandidates(std::vector<Candidate>& out, bool combatOnly)
 {
     out.clear();
 
     Rect view;
-    if (!isoWindowRect(&view)) {
+    if (!isoVisibleRect(&view)) {
         return;
     }
 
@@ -1402,7 +1420,7 @@ bool gamepadSmartClick(int x, int y)
     }
 
     Rect view;
-    if (!isoWindowRect(&view) || x < view.left || x > view.right || y < view.top || y > view.bottom) {
+    if (!isoVisibleRect(&view) || x < view.left || x > view.right || y < view.top || y > view.bottom) {
         return true; // barra dell'interfaccia
     }
 
@@ -1952,7 +1970,7 @@ static void followCamera()
     }
 
     Rect view;
-    if (!isoWindowRect(&view)) {
+    if (!isoVisibleRect(&view)) {
         return;
     }
 
@@ -2360,7 +2378,7 @@ static void hintsTick(bool isInCombatMode)
     bool wasVisible = gHintVisible;
 
     Rect iso;
-    if (items.empty() || !isoWindowRect(&iso)) {
+    if (items.empty() || !isoVisibleRect(&iso)) {
         gHintVisible = false;
     } else {
         int isoWidth = iso.right - iso.left + 1;
