@@ -13,6 +13,7 @@
 #include "debug.h"
 #include "draw.h"
 #include "game.h"
+#include "gamepad.h"
 #include "game_mouse.h"
 #include "item.h"
 #include "light.h"
@@ -875,6 +876,7 @@ void _obj_render_post_roof(Rect* rect, int elevation)
     }
 
     textObjectsRenderInRect(&updatedRect);
+    gamepadHintsRender(&updatedRect, gObjectsWindowBuffer, gObjectsWindowPitch);
 
     ObjectListNode* objectListNode = gObjectListHead;
     while (objectListNode != nullptr) {
