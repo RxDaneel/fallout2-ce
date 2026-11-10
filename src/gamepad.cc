@@ -25,6 +25,7 @@
 #include "game_mouse.h"
 #include "input.h"
 #include "interface.h"
+#include "inventory.h"
 #include "item.h"
 #include "loadsave.h"
 #include "map.h"
@@ -2332,14 +2333,50 @@ static void hintsCollect(std::vector<HintItem>& items, bool isInCombatMode)
     }
 
     if (isInCombatMode) {
-        if (mode == GAME_MOUSE_MODE_CROSSHAIR) {
-            std::string text = "Attacca";
-            if (gTargetCurrent != nullptr) {
-                text += " " + hintName(gTargetCurrent);
+        // Arma nella mano attiva (quella che spara/colpisce con A) e nell'altra.
+        bool leftActive = interfaceGetCurrentHand() == HAND_LEFT;
+        Object* weapon = leftActive ? critterGetItem1(gDude) : critterGetItem2(gDude);
+        Object* other = leftActive ? critterGetItem2(gDude) : critterGetItem1(gDude);
+        auto isWeapon = [](Object* item) {
+            return item != nullptr && itemGetType(item) == ITEM_TYPE_WEAPON;
+        };
+
+        if (mode == GAME_MOUSE_MODE_CROSSHAIR && gTargetCurrent != nullptr) {
+            int hitMode;
+            bool aiming;
+            interfaceGetCurrentHitMode(&hitMode, &aiming);
+            bool ranged = isWeapon(weapon) && weaponGetRange(gDude, hitMode) > 1;
+            std::string name = hintName(gTargetCurrent);
+            std::string text;
+            switch (_combat_check_bad_shot(gDude, gTargetCurrent, hitMode, aiming)) {
+            case COMBAT_BAD_SHOT_OUT_OF_RANGE:
+                // (niente lettere accentate: il font del gioco non le ha)
+                text = isWeapon(weapon) ? name + " e' fuori portata" : "Troppo lontano per le mani nude";
+                break;
+            case COMBAT_BAD_SHOT_NO_AMMO:
+                text = "Arma scarica: ricarica dall'inventario (Y)";
+                break;
+            case COMBAT_BAD_SHOT_NOT_ENOUGH_AP:
+                text = "PA insufficienti: chiudi il turno";
+                break;
+            case COMBAT_BAD_SHOT_AIM_BLOCKED:
+                text = "Tiro bloccato verso " + name;
+                break;
+            case COMBAT_BAD_SHOT_ARM_CRIPPLED:
+            case COMBAT_BAD_SHOT_BOTH_ARMS_CRIPPLED:
+                text = "Braccio ferito: non puoi usare quest'arma";
+                break;
+            default:
+                text = (ranged ? "Spara a " : "Colpisci ") + name
+                    + " (" + std::to_string(itemGetActionPointCost(gDude, hitMode, aiming)) + " PA)";
+                break;
             }
             items.push_back({ "A", text });
         } else if (gCombatHex != -1 && gCombatHex != gDude->tile) {
             items.push_back({ "A", "Vai qui" });
+        }
+        if (!isWeapon(weapon) && isWeapon(other)) {
+            items.push_back({ "LT", "Usa " + hintName(other) });
         }
         items.push_back({ "RB", "Bersaglio" });
         items.push_back({ "RT", "Fine turno" });
@@ -2509,7 +2546,24 @@ static void hintsTick(bool isInCombatMode)
     std::vector<HintItem> items;
     hintsCollect(items, isInCombatMode);
 
-    std::string key;
+    // Se la barra in basso coprirebbe quello che stai guardando (bersaglio,
+    // oggetto, esagono), va in alto.
+    bool top = false;
+    Rect visible;
+    if (!items.empty() && isoVisibleRect(&visible)) {
+        int x = -1;
+        int y = -1;
+        Object* watched = gTargetCurrent != nullptr ? gTargetCurrent : gFocus;
+        if (watched != nullptr && watched != gDude) {
+            objectAimPoint(watched, &x, &y);
+        } else if (gCombatHex != -1) {
+            hexCenter(gCombatHex, &x, &y);
+        }
+        int barTop = visible.bottom - visible.top + 1 - kHintHeight - 3;
+        top = y != -1 && y - visible.top > barTop - 40;
+    }
+
+    std::string key = top ? "T|" : "B|";
     for (const HintItem& item : items) {
         key += item.button;
         key += '|';
@@ -2533,7 +2587,7 @@ static void hintsTick(bool isInCombatMode)
         int isoHeight = iso.bottom - iso.top + 1;
         hintsBuild(items, isoWidth - 16);
         gHintRect.left = (isoWidth - gHintWidth) / 2;
-        gHintRect.top = isoHeight - kHintHeight - 3;
+        gHintRect.top = top ? 3 : isoHeight - kHintHeight - 3;
         gHintRect.right = gHintRect.left + gHintWidth - 1;
         gHintRect.bottom = gHintRect.top + kHintHeight - 1;
         gHintVisible = true;
