@@ -250,6 +250,11 @@ static int inventoryMessageListFree();
 // CE (controlli): tipo della finestra inventario aperta, -1 se nessuna.
 static int gQuickMoveWindowType = -1;
 
+// Controller: X su un oggetto dell'inventario lo usa subito (stimpak, cibo,
+// droghe...) senza aprire il menu azioni. Il clic che segue la richiesta
+// arriva in modalità freccia e inventoryWindowOpenContextMenu sceglie "usa".
+static bool gInventoryQuickUse = false;
+
 static bool _setup_inventory(int inventoryWindowType);
 static void _exit_inventory(bool shouldEnableIso);
 static void _display_inventory(int stackOffset, int draggedSlotIndex, int inventoryWindowType);
@@ -3728,8 +3733,11 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
 
     int itemType = itemGetType(item);
 
+    bool quickUse = gInventoryQuickUse;
+    gInventoryQuickUse = false;
+
     int mouseState;
-    do {
+    if (!quickUse) do {
         sharedFpsLimiter.mark();
 
         inputGetInput();
@@ -3753,7 +3761,9 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
         sharedFpsLimiter.throttle();
     } while ((mouseState & MOUSE_EVENT_LEFT_BUTTON_DOWN_REPEAT) != MOUSE_EVENT_LEFT_BUTTON_DOWN_REPEAT);
 
-    inventorySetCursor(INVENTORY_WINDOW_CURSOR_BLANK);
+    if (!quickUse) {
+        inventorySetCursor(INVENTORY_WINDOW_CURSOR_BLANK);
+    }
 
     unsigned char* windowBuffer = windowGetBuffer(gInventoryWindow);
 
@@ -3809,6 +3819,24 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
         }
     }
 
+    int menuItemIndex = 0;
+    if (quickUse) {
+        // Niente menu: "usa" se c'è, altrimenti esamina.
+        int useIndex = -1;
+        for (int index = 0; index < actionMenuItemsLength; index++) {
+            if (actionMenuItems[index] == GAME_MOUSE_ACTION_MENU_ITEM_USE) {
+                useIndex = index;
+            }
+        }
+        if (useIndex == -1) {
+            inventoryExamineItem(_stack[0], item);
+            inventorySetCursor(INVENTORY_WINDOW_CURSOR_HAND);
+            windowRefresh(gInventoryWindow);
+            return;
+        }
+        menuItemIndex = useIndex;
+    } else {
+
     const InventoryWindowDescription* windowDescription = &(gInventoryWindowDescriptions[inventoryWindowType]);
 
     Rect windowRect;
@@ -3852,7 +3880,6 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
         BUTTON_FLAG_TRANSPARENT);
     windowRefreshRect(gInventoryWindow, &rect);
 
-    int menuItemIndex = 0;
     int previousMouseY = y;
     while ((mouseGetEvent() & MOUSE_EVENT_LEFT_BUTTON_UP) == 0) {
         sharedFpsLimiter.mark();
@@ -3908,6 +3935,7 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
     }
 
     _mouse_set_position(x, y);
+    }
 
     _display_inventory(_stack_offset[_curr_stack], -1, inventoryWindowType);
 
@@ -4039,7 +4067,7 @@ static void inventoryWindowOpenContextMenu(int keyCode, int inventoryWindowType)
         break;
     }
 
-    inventorySetCursor(INVENTORY_WINDOW_CURSOR_ARROW);
+    inventorySetCursor(quickUse ? INVENTORY_WINDOW_CURSOR_HAND : INVENTORY_WINDOW_CURSOR_ARROW);
 
     if (inventoryWindowType == INVENTORY_WINDOW_TYPE_NORMAL && actionMenuItem != GAME_MOUSE_ACTION_MENU_ITEM_LOOK) {
         inventoryRenderSummary();
@@ -6015,6 +6043,33 @@ int inventoryQuickMoveWindowType()
 // dalla lista alla mano attiva (o all'armatura), dagli slot alla lista, nel
 // bottino e nel baratto da una colonna all'altra. Con il controller un tocco
 // di A fa quel trascinamento da solo.
+
+int inventoryWindowId()
+{
+    return gQuickMoveWindowType != -1 ? gInventoryWindow : -1;
+}
+
+bool inventoryQuickUseRequest()
+{
+    if (gQuickMoveWindowType != INVENTORY_WINDOW_TYPE_NORMAL || gInventoryCursor != INVENTORY_WINDOW_CURSOR_HAND) {
+        return false;
+    }
+    gInventoryQuickUse = true;
+    inventorySetCursor(INVENTORY_WINDOW_CURSOR_ARROW);
+    return true;
+}
+
+void inventoryQuickUseCancel()
+{
+    if (!gInventoryQuickUse) {
+        return;
+    }
+    gInventoryQuickUse = false;
+    if (gQuickMoveWindowType != -1 && gInventoryCursor == INVENTORY_WINDOW_CURSOR_ARROW) {
+        inventorySetCursor(INVENTORY_WINDOW_CURSOR_HAND);
+    }
+}
+
 bool inventoryQuickMoveTarget(int topWindow, int* outX, int* outY)
 {
     if (gQuickMoveWindowType == -1 || topWindow != gInventoryWindow || gInventoryCursor != INVENTORY_WINDOW_CURSOR_HAND) {
