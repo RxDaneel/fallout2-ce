@@ -42,6 +42,13 @@ void inventoryOpenTrade(int win, Object* barterer, Object* playerTable, Object* 
 int _inven_set_timer(Object* item);
 Object* inven_get_current_target_obj();
 
+// CE (controlli): vedi inventoryQuickMoveTarget in inventory.cc.
+int inventoryQuickMoveWindowType();
+// (topWindow: la finestra visibile più in alto, deve essere quella dell'inventario)
+bool inventoryQuickMoveTarget(int topWindow, int* outX, int* outY);
+int inventoryQuantityWindow();
+bool inventoryQuickMoveHome(int* outX, int* outY);
+
 } // namespace fallout
 
 #endif /* INVENTORY_H */

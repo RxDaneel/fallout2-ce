@@ -1218,6 +1218,12 @@ int windowManagerGetNavTargets(NavTarget* targets, int max, int excludeWin1, int
             target->win = window->id;
             target->btn = button->id;
         }
+
+        // Sotto una finestra modale non si può interagire: i suoi pulsanti
+        // sono gli unici validi (es. "Sposta oggetti" sopra l'inventario).
+        if ((window->flags & WINDOW_MODAL) != 0) {
+            break;
+        }
     }
     return count;
 }

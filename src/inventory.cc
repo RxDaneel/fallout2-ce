@@ -1,4 +1,5 @@
 #include "inventory.h"
+#include "gamepad.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -246,6 +247,9 @@ typedef enum InventoryMoveResult {
 
 static int inventoryMessageListInit();
 static int inventoryMessageListFree();
+// CE (controlli): tipo della finestra inventario aperta, -1 se nessuna.
+static int gQuickMoveWindowType = -1;
+
 static bool _setup_inventory(int inventoryWindowType);
 static void _exit_inventory(bool shouldEnableIso);
 static void _display_inventory(int stackOffset, int draggedSlotIndex, int inventoryWindowType);
@@ -438,7 +442,7 @@ static int _stack_offset[10];
 static Object* _stack[10];
 
 // 0x59E894
-static int _mt_wid;
+static int _mt_wid = -1;
 
 // Current barter price modifier, set from scripts.
 // 0x59E898
@@ -734,6 +738,7 @@ void inventoryOpen()
 // 0x46EC90
 static bool _setup_inventory(int inventoryWindowType)
 {
+    gQuickMoveWindowType = inventoryWindowType;
     _dropped_explosive = 0;
     _curr_stack = 0;
     _stack_offset[0] = 0;
@@ -1524,6 +1529,7 @@ static bool _setup_inventory(int inventoryWindowType)
 // 0x46FBD8
 static void _exit_inventory(bool shouldEnableIso)
 {
+    gQuickMoveWindowType = -1;
     _inven_dude = _stack[0];
 
     if (gInventoryLeftHandItem != nullptr) {
@@ -5595,6 +5601,11 @@ static int inventoryQuantitySelect(int inventoryWindowType, Object* item, int ma
             max = 99999;
         }
         min = 1;
+        // CE (controlli): col controller si parte da "tutto": di solito è
+        // quello che vuoi, e togliere è più comodo che aggiungere.
+        if (gamepadIsPadMode()) {
+            value = max;
+        }
     } else {
         value = 60;
         min = 10;
@@ -5963,6 +5974,7 @@ static int inventoryQuantityWindowFree(int inventoryWindowType)
     }
 
     windowDestroy(_mt_wid);
+    _mt_wid = -1;
 
     return 0;
 }
@@ -5991,6 +6003,146 @@ int _inven_set_timer(Object* item)
 Object* inven_get_current_target_obj()
 {
     return _target_stack[_target_curr_stack];
+}
+
+
+int inventoryQuickMoveWindowType()
+{
+    return gQuickMoveWindowType;
+}
+
+// CE (controlli): dove andrebbe "naturalmente" l'oggetto sotto il cursore:
+// dalla lista alla mano attiva (o all'armatura), dagli slot alla lista, nel
+// bottino e nel baratto da una colonna all'altra. Con il controller un tocco
+// di A fa quel trascinamento da solo.
+bool inventoryQuickMoveTarget(int topWindow, int* outX, int* outY)
+{
+    if (gQuickMoveWindowType == -1 || topWindow != gInventoryWindow || gInventoryCursor != INVENTORY_WINDOW_CURSOR_HAND) {
+        return false;
+    }
+
+    Rect window;
+    if (windowGetRect(gInventoryWindow, &window) == -1) {
+        return false;
+    }
+
+    int mouseX;
+    int mouseY;
+    mouseGetPosition(&mouseX, &mouseY);
+    int x = mouseX - window.left;
+    int y = mouseY - window.top;
+    int listHeight = INVENTORY_SLOT_HEIGHT * gInventorySlotsCount;
+
+    auto inside = [&](int left, int top, int right, int bottom) {
+        return x >= left && x <= right && y >= top && y <= bottom;
+    };
+    auto inList = [&](int left, int top) {
+        return inside(left, top, left + INVENTORY_SLOT_WIDTH, top + listHeight);
+    };
+    auto toList = [&](int left, int top) {
+        *outX = window.left + left + INVENTORY_SLOT_WIDTH / 2;
+        *outY = window.top + top + listHeight / 2;
+        return true;
+    };
+    auto toSlot = [&](int left, int top, int right, int bottom) {
+        *outX = window.left + (left + right) / 2;
+        *outY = window.top + (top + bottom) / 2;
+        return true;
+    };
+
+    switch (gQuickMoveWindowType) {
+    case INVENTORY_WINDOW_TYPE_NORMAL:
+        if (inList(INVENTORY_SCROLLER_X, INVENTORY_SCROLLER_Y)) {
+            int row = (y - INVENTORY_SCROLLER_Y) / INVENTORY_SLOT_HEIGHT;
+            int index = _pud->length - (row + _stack_offset[_curr_stack] + 1);
+            if (index < 0 || index >= _pud->length) {
+                return false;
+            }
+            if (itemGetType(_pud->items[index].item) == ITEM_TYPE_ARMOR) {
+                return toSlot(INVENTORY_ARMOR_SLOT_X, INVENTORY_ARMOR_SLOT_Y, INVENTORY_ARMOR_SLOT_MAX_X, INVENTORY_ARMOR_SLOT_MAX_Y);
+            }
+            if (_inven_dude == gDude && interfaceGetCurrentHand() == HAND_LEFT) {
+                return toSlot(INVENTORY_LEFT_HAND_SLOT_X, INVENTORY_LEFT_HAND_SLOT_Y, INVENTORY_LEFT_HAND_SLOT_MAX_X, INVENTORY_LEFT_HAND_SLOT_MAX_Y);
+            }
+            return toSlot(INVENTORY_RIGHT_HAND_SLOT_X, INVENTORY_RIGHT_HAND_SLOT_Y, INVENTORY_RIGHT_HAND_SLOT_MAX_X, INVENTORY_RIGHT_HAND_SLOT_MAX_Y);
+        }
+        if (inside(INVENTORY_LEFT_HAND_SLOT_X, INVENTORY_LEFT_HAND_SLOT_Y, INVENTORY_LEFT_HAND_SLOT_MAX_X, INVENTORY_LEFT_HAND_SLOT_MAX_Y)
+            || inside(INVENTORY_RIGHT_HAND_SLOT_X, INVENTORY_RIGHT_HAND_SLOT_Y, INVENTORY_RIGHT_HAND_SLOT_MAX_X, INVENTORY_RIGHT_HAND_SLOT_MAX_Y)
+            || inside(INVENTORY_ARMOR_SLOT_X, INVENTORY_ARMOR_SLOT_Y, INVENTORY_ARMOR_SLOT_MAX_X, INVENTORY_ARMOR_SLOT_MAX_Y)) {
+            return toList(INVENTORY_SCROLLER_X, INVENTORY_SCROLLER_Y);
+        }
+        return false;
+    case INVENTORY_WINDOW_TYPE_LOOT:
+        if (inList(INVENTORY_LOOT_LEFT_SCROLLER_X, INVENTORY_LOOT_LEFT_SCROLLER_Y)) {
+            return toList(INVENTORY_LOOT_RIGHT_SCROLLER_X, INVENTORY_LOOT_RIGHT_SCROLLER_Y);
+        }
+        if (inList(INVENTORY_LOOT_RIGHT_SCROLLER_X, INVENTORY_LOOT_RIGHT_SCROLLER_Y)) {
+            return toList(INVENTORY_LOOT_LEFT_SCROLLER_X, INVENTORY_LOOT_LEFT_SCROLLER_Y);
+        }
+        return false;
+    case INVENTORY_WINDOW_TYPE_TRADE:
+        // Il cursore sta sulle caselle (colonne dei pulsanti); il rilascio va
+        // nelle zone che il gioco controlla, leggermente diverse.
+        if (inList(INVENTORY_TRADE_LEFT_SCROLLER_X, INVENTORY_TRADE_LEFT_SCROLLER_Y)) {
+            return toList(INVENTORY_TRADE_INNER_LEFT_SCROLLER_TRACKING_X, INVENTORY_TRADE_INNER_LEFT_SCROLLER_TRACKING_Y);
+        }
+        if (inList(INVENTORY_TRADE_INNER_LEFT_SCROLLER_X, INVENTORY_TRADE_INNER_LEFT_SCROLLER_Y)) {
+            return toList(INVENTORY_TRADE_LEFT_SCROLLER_TRACKING_X, INVENTORY_TRADE_LEFT_SCROLLER_TRACKING_Y);
+        }
+        if (inList(INVENTORY_TRADE_RIGHT_SCROLLER_X, INVENTORY_TRADE_RIGHT_SCROLLER_Y)) {
+            return toList(INVENTORY_TRADE_INNER_RIGHT_SCROLLER_TRACKING_X, INVENTORY_TRADE_INNER_RIGHT_SCROLLER_TRACKING_Y);
+        }
+        if (inList(INVENTORY_TRADE_INNER_RIGHT_SCROLLER_X, INVENTORY_TRADE_INNER_RIGHT_SCROLLER_Y)) {
+            return toList(INVENTORY_TRADE_RIGHT_SCROLLER_TRACKING_X, INVENTORY_TRADE_RIGHT_SCROLLER_TRACKING_Y);
+        }
+        return false;
+    }
+
+    return false;
+}
+
+// CE (controlli): finestra "Sposta oggetti" (quantità), -1 se chiusa.
+int inventoryQuantityWindow()
+{
+    return _mt_wid;
+}
+
+// CE (controlli): punto di partenza della selezione quando si apre una
+// finestra inventario: la prima casella della tua lista.
+bool inventoryQuickMoveHome(int* outX, int* outY)
+{
+    if (gQuickMoveWindowType == -1) {
+        return false;
+    }
+
+    Rect window;
+    if (windowGetRect(gInventoryWindow, &window) == -1) {
+        return false;
+    }
+
+    int x;
+    int y;
+    switch (gQuickMoveWindowType) {
+    case INVENTORY_WINDOW_TYPE_NORMAL:
+    case INVENTORY_WINDOW_TYPE_USE_ITEM_ON:
+        x = INVENTORY_SCROLLER_X;
+        y = INVENTORY_SCROLLER_Y;
+        break;
+    case INVENTORY_WINDOW_TYPE_LOOT:
+        x = INVENTORY_LOOT_LEFT_SCROLLER_X;
+        y = INVENTORY_LOOT_LEFT_SCROLLER_Y;
+        break;
+    case INVENTORY_WINDOW_TYPE_TRADE:
+        x = INVENTORY_TRADE_LEFT_SCROLLER_X;
+        y = INVENTORY_TRADE_LEFT_SCROLLER_Y;
+        break;
+    default:
+        return false;
+    }
+
+    *outX = window.left + x + INVENTORY_SLOT_WIDTH / 2;
+    *outY = window.top + y + INVENTORY_SLOT_HEIGHT / 2;
+    return true;
 }
 
 } // namespace fallout

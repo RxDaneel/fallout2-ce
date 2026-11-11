@@ -65,6 +65,9 @@ bool interface_get_current_attack_mode(int* hit_mode);
 
 unsigned char* customInterfaceBarGetBackgroundImageData();
 
+// CE (controlli): ricarica diretta dell'arma attiva.
+int interfaceReloadActiveWeapon();
+
 } // namespace fallout
 
 #endif /* INTERFACE_H */
