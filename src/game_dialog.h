@@ -18,6 +18,7 @@ bool _gdialogActive();
 
 #define DIALOG_TARGETS_MAX 16
 int gameDialogGetOptionTargets(int* xs, int* ys, int max);
+int gameDialogOptionsWindow();
 void gameDialogEnter(Object* speaker, int a2);
 void _gdialogSystemEnter();
 void gameDialogStartLips(const char* a1);

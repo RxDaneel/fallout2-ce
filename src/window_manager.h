@@ -154,6 +154,8 @@ typedef struct NavTarget {
 } NavTarget;
 
 int windowManagerGetNavTargets(NavTarget* targets, int max, int excludeWin1, int excludeWin2);
+// Finestra in cui un pulsante grande quanto la finestra conta come comando.
+extern int gNavFullWindowAllowed;
 int windowManagerGetTopVisibleWindow(int excludeWin1, int excludeWin2);
 
 typedef int(VideoSystemInitProc)();

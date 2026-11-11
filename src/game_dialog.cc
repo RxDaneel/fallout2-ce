@@ -670,6 +670,11 @@ bool _gdialogActive()
 
 // Controller: centri (in coordinate schermo) delle risposte visibili, per
 // spostare il cursore da una risposta all'altra con la croce direzionale.
+int gameDialogOptionsWindow()
+{
+    return _gdialogActive() ? gGameDialogOptionsWindow : -1;
+}
+
 int gameDialogGetOptionTargets(int* xs, int* ys, int max)
 {
     if (!_gdialogActive() || gGameDialogOptionsWindow == -1) {
